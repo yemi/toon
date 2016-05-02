@@ -30,6 +30,7 @@ executable toon-exe
                      , mtl
                      , wreq
                      , aeson
+                     , lens-aeson
                      , bytestring
                      , lens
                      , text
