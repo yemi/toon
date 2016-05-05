@@ -27,16 +27,19 @@ instance FromJSON Track where
   parseJSON (Object v) = Track <$> v .: "id" <*> v .: "stream_url"
   parseJSON _ = mempty
 
+newtype Resource a = Resource a
+
 clientID :: Text
 clientID = "f0b4138275ee2a59e4017654e9ff7c3f"
 
-fetchTrack :: Text -> IO (Maybe Track)
-fetchTrack url = do
+fetchResource :: Text -> IO (Maybe (Resource a))
+fetchResource url = do
   let opts = defaults & param "client_id" .~ [clientID]
                       & param "url" .~ [url]
                       & header "Accept" .~ ["application/json"]
   res <- asJSON =<< getWith opts "http://api.soundcloud.com/resolve"
-  return $ res ^? responseBody
+  let resource = Resource <$> res ^? responseBody
+  return resource
 
 fetchRelatedTracks :: Track -> IO (Maybe [Track])
 fetchRelatedTracks Track { t_id } = do
@@ -46,10 +49,8 @@ fetchRelatedTracks Track { t_id } = do
   return $ res ^? responseBody
 
 addTracksToPlaylist :: [Track] -> IO ()
-addTracksToPlaylist tracks = do
-  forM_ tracks $ \Track { t_streamURL } ->
-    withMPD $ add . fromString . unpack $ t_streamURL <> "?client_id=" <> clientID
-  return ()
+addTracksToPlaylist tracks = forM_ tracks $ \Track { t_streamURL } ->
+  withMPD $ add . fromString . unpack $ t_streamURL <> "?client_id=" <> clientID
 
 getSongsInPlaylist :: IO [Song]
 getSongsInPlaylist = do
@@ -62,11 +63,11 @@ repl = do
   case trackURL of
     Nothing -> outputStrLn "Goodbye."
     Just trackURL' -> do
-      maybeTrack <- liftIO . fetchTrack $ pack trackURL'
+      maybeResource <- liftIO . fetchResource $ pack trackURL'
 
-      case maybeTrack of
+      case maybeResource of
         Nothing -> outputStrLn "The track you searched for couldn't be found"
-        Just track -> do
+        Just (Resource track) -> do
           maybeRelatedTracks <- liftIO $ fetchRelatedTracks track
 
           case maybeRelatedTracks of
