@@ -31,6 +31,7 @@ executable toon-exe
                      , wreq
                      , aeson
                      , lens-aeson
+                     , attoparsec
                      , bytestring
                      , lens
                      , text

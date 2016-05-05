@@ -1,17 +1,17 @@
-{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
 
-import           Control.Lens             ((&), (.~), (^.), (^?))
+import           Control.Lens             ((&), (.~), (^?))
+import           Control.Monad            (forM_)
 import           Control.Monad.Trans      (liftIO)
-import           Data.Aeson               (FromJSON)
-import           Data.Aeson.Lens          (key, _String)
+import           Data.Aeson               (FromJSON, Value (..), parseJSON,
+                                           (.:))
 import           Data.Monoid              ((<>))
 import           Data.String              (fromString)
 import           Data.Text                (Text, pack, unpack)
-import           GHC.Generics             (Generic)
-import qualified Network.MPD              as MPD
+import           Network.MPD              hiding (Track)
 import           Network.Wreq
 import           System.Console.Haskeline (InputT (), defaultSettings,
                                            getInputLine, outputStrLn, runInputT)
@@ -19,11 +19,13 @@ import           System.Console.Haskeline (InputT (), defaultSettings,
 type Repl a = InputT IO a
 
 data Track = Track
-  { id        :: Int
-  , stream_url :: Text
-  } deriving (Generic, Show, Eq)
+  { t_id        :: Int
+  , t_streamURL :: Text
+  } deriving (Show, Eq)
 
-instance FromJSON Track
+instance FromJSON Track where
+  parseJSON (Object v) = Track <$> v .: "id" <*> v .: "stream_url"
+  parseJSON _ = mempty
 
 clientID :: Text
 clientID = "f0b4138275ee2a59e4017654e9ff7c3f"
@@ -33,9 +35,26 @@ fetchTrack url = do
   let opts = defaults & param "client_id" .~ [clientID]
                       & param "url" .~ [url]
                       & header "Accept" .~ ["application/json"]
-
   res <- asJSON =<< getWith opts "http://api.soundcloud.com/resolve"
   return $ res ^? responseBody
+
+fetchRelatedTracks :: Track -> IO (Maybe [Track])
+fetchRelatedTracks Track { t_id } = do
+  let opts = defaults & param "client_id" .~ [clientID]
+                      & header "Accept" .~ ["application/json"]
+  res <- asJSON =<< getWith opts ("http://api.soundcloud.com/tracks/" <> show t_id <> "/related")
+  return $ res ^? responseBody
+
+addTracksToPlaylist :: [Track] -> IO ()
+addTracksToPlaylist tracks = do
+  forM_ tracks $ \Track { t_streamURL } ->
+    withMPD $ add . fromString . unpack $ t_streamURL <> "?client_id=" <> clientID
+  return ()
+
+getSongsInPlaylist :: IO [Song]
+getSongsInPlaylist = do
+  res <- withMPD $ playlistId Nothing
+  return $ either (const mempty) id res
 
 repl :: Repl ()
 repl = do
@@ -48,11 +67,20 @@ repl = do
       case maybeTrack of
         Nothing -> outputStrLn "The track you searched for couldn't be found"
         Just track -> do
-          liftIO . MPD.withMPD $ do
-            liftIO $ putStrLn "Starting track..."
-            MPD.add . fromString . unpack $ stream_url track <> "?client_id=" <> clientID
-            MPD.play Nothing
-            MPD.currentSong
+          maybeRelatedTracks <- liftIO $ fetchRelatedTracks track
+
+          case maybeRelatedTracks of
+            Nothing -> outputStrLn "The track doesnt have any related tracks"
+            Just relatedTracks -> do
+              outputStrLn "Found tracks!"
+              liftIO $ addTracksToPlaylist relatedTracks
+
+              songs <- liftIO getSongsInPlaylist
+
+              outputStrLn "Starting playlist :)"
+              liftIO . withMPD $ play Nothing
+
+              return ()
 
           return ()
       repl
