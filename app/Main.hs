@@ -6,7 +6,7 @@ module Main where
 import           Control.Lens             ((&), (.~), (^?))
 import           Control.Monad            (forM_)
 import           Control.Monad.Trans      (liftIO)
-import           Data.Aeson               (FromJSON, Value (..), parseJSON,
+import           Data.Aeson               (FromJSON, parseJSON, withObject,
                                            (.:))
 import           Data.Monoid              ((<>))
 import           Data.String              (fromString)
@@ -14,41 +14,43 @@ import           Data.Text                (Text, pack, unpack)
 import           Network.MPD              hiding (Track)
 import           Network.Wreq
 import           System.Console.Haskeline (InputT (), defaultSettings,
-                                           getInputLine, outputStrLn, runInputT)
+                                           getInputChar,
+                                           getInputLineWithInitial, outputStrLn,
+                                           runInputT)
 
-type Repl a = InputT IO a
+data Resource
+  = Track { t_id :: Int, t_title :: Text, t_streamURL :: Text }
+  | Playlist { pl_id :: Int, pl_title :: Text, pl_tracks :: [Resource]}
 
-data Track = Track
-  { t_id        :: Int
-  , t_streamURL :: Text
-  } deriving (Show, Eq)
+type PlayerState = State
 
-instance FromJSON Track where
-  parseJSON (Object v) = Track <$> v .: "id" <*> v .: "stream_url"
-  parseJSON _ = mempty
-
-newtype Resource a = Resource a
+instance FromJSON Resource where
+  parseJSON = withObject "track, playlist or user" $ \o -> do
+    kind <- o .: "kind"
+    case kind of
+      "track" -> Track <$> o .: "id" <*> o .: "title" <*> o .: "stream_url"
+      "playlist" -> Playlist <$> o .: "id" <*> o .: "title" <*> o .: "tracks"
+      _ -> fail ("unknown kind: " ++ kind)
 
 clientID :: Text
 clientID = "f0b4138275ee2a59e4017654e9ff7c3f"
 
-fetchResource :: Text -> IO (Maybe (Resource a))
+fetchResource :: Text -> IO (Maybe Resource)
 fetchResource url = do
   let opts = defaults & param "client_id" .~ [clientID]
                       & param "url" .~ [url]
                       & header "Accept" .~ ["application/json"]
   res <- asJSON =<< getWith opts "http://api.soundcloud.com/resolve"
-  let resource = Resource <$> res ^? responseBody
-  return resource
+  return $ res ^? responseBody
 
-fetchRelatedTracks :: Track -> IO (Maybe [Track])
+fetchRelatedTracks :: Resource -> IO (Maybe [Resource])
 fetchRelatedTracks Track { t_id } = do
   let opts = defaults & param "client_id" .~ [clientID]
                       & header "Accept" .~ ["application/json"]
   res <- asJSON =<< getWith opts ("http://api.soundcloud.com/tracks/" <> show t_id <> "/related")
   return $ res ^? responseBody
 
-addTracksToPlaylist :: [Track] -> IO ()
+addTracksToPlaylist :: [Resource] -> IO ()
 addTracksToPlaylist tracks = forM_ tracks $ \Track { t_streamURL } ->
   withMPD $ add . fromString . unpack $ t_streamURL <> "?client_id=" <> clientID
 
@@ -57,35 +59,67 @@ getSongsInPlaylist = do
   res <- withMPD $ playlistId Nothing
   return $ either (const mempty) id res
 
-repl :: Repl ()
-repl = do
-  trackURL <- getInputLine "SoundCloud track URL:"
-  case trackURL of
-    Nothing -> outputStrLn "Goodbye."
-    Just trackURL' -> do
-      maybeResource <- liftIO . fetchResource $ pack trackURL'
+searchResource :: Maybe Text -> IO (Maybe Resource)
+searchResource maybeURL = case maybeURL of
+  Nothing -> return Nothing
+  Just url -> fetchResource url
 
-      case maybeResource of
-        Nothing -> outputStrLn "The track you searched for couldn't be found"
-        Just (Resource track) -> do
-          maybeRelatedTracks <- liftIO $ fetchRelatedTracks track
+handleResource :: Maybe Resource -> IO (Maybe [Resource])
+handleResource maybeResource = case maybeResource of
+  Nothing -> return Nothing
+  Just resource -> case resource of
+    track@Track {} -> fetchRelatedTracks track
+    _ -> return Nothing
 
-          case maybeRelatedTracks of
-            Nothing -> outputStrLn "The track doesnt have any related tracks"
-            Just relatedTracks -> do
-              outputStrLn "Found tracks!"
-              liftIO $ addTracksToPlaylist relatedTracks
+handleResources :: Maybe [Resource] -> IO PlayerState
+handleResources maybeResources = case maybeResources of
+  Nothing -> return Stopped
+  Just resources -> case resources of
+    Track {}:_ -> do
+      putStrLn "Found tracks!"
+      withMPD clear
+      addTracksToPlaylist resources
+      putStrLn "Starting playlist :)"
+      withMPD $ play Nothing
+      return Playing
 
-              songs <- liftIO getSongsInPlaylist
+renderUI :: PlayerState -> InputT IO ()
+renderUI Stopped = do
+  outputStrLn "URL to track, user or playlist:"
+  maybeURL <- getInputLineWithInitial "> " ("https://soundcloud.com/", "")
+  maybeResource <- liftIO . searchResource $ pack <$> maybeURL
+  maybeResources <- liftIO $ handleResource maybeResource
+  playerState' <- liftIO $ handleResources maybeResources
+  renderUI playerState'
+renderUI _ = do
+  outputStrLn "\r Enter command: h (prev) | j (pause) | k (play) | l (next)"
+  maybeChar <- getInputChar "> "
+  case maybeChar of
+    Nothing -> return ()
+    Just char -> liftIO $ case char of
+      'h' -> withMPD previous >> return ()
+      'j' -> withMPD (pause True) >> return ()
+      'k' -> withMPD (play Nothing) >> return ()
+      'l' -> withMPD next >> return ()
+      _ -> return ()
 
-              outputStrLn "Starting playlist :)"
-              liftIO . withMPD $ play Nothing
-
-              return ()
-
-          return ()
-      repl
+  eitherStatus <- liftIO $ withMPD status
+  renderUI $ either (const Stopped) stState eitherStatus
 
 main :: IO ()
-main = runInputT defaultSettings repl
+main = runInputT defaultSettings $ do
+  outputStrLn "\ntt                          "
+  outputStrLn "tt     oooo   oooo  nn nnn  "
+  outputStrLn "tttt  oo  oo oo  oo nnn  nn "
+  outputStrLn "tt    oo  oo oo  oo nn   nn "
+  outputStrLn " tttt  oooo   oooo  nn   nn\n"
+  outputStrLn "The SoundCloud based interactive radio station\n"
+  outputStrLn "Commands (vim style):\n"
+  outputStrLn "h - previous"
+  outputStrLn "j - pause"
+  outputStrLn "k - play"
+  outputStrLn "l - next\n"
+
+  eitherStatus <- liftIO $ withMPD status
+  renderUI $ either (const Stopped) stState eitherStatus
 
