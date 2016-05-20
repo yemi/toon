@@ -14,7 +14,7 @@ $ brew install mpd toon
 ## Usage
 
 ```shell
-$ mpd --no-config # runs the mpd server
+$ mpd --no-config # runs the mpd server that toon interacts with
 
 $ toon
 ```
