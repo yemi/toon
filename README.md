@@ -6,14 +6,14 @@ The SoundCloud based interactive radio station
 
 Toon uses `mpd` (music player daemon) to stream audio in a headless manner.
 
-```
+```shell
 $ brew tap yemi/toon
 $ brew install mpd toon
 ```
 
 ## Usage
 
-```
+```shell
 $ mpd --no-config # runs the mpd server
 
 $ toon
