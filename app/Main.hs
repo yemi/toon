@@ -21,7 +21,7 @@ import           Network.Wreq             (asJSON, defaults, getWith, header,
 import           System.Console.Haskeline (InputT (), defaultSettings,
                                            getInputChar,
                                            getInputLineWithInitial, outputStrLn,
-                                           runInputT)
+                                           outputStr, runInputT)
 
 type UI a = InputT IO a
 
@@ -104,15 +104,16 @@ renderUI Stopped = do
   playerState' <- liftIO $ handleResources maybeResources
   renderUI playerState'
 renderUI _ = do
-  outputStrLn "\r Enter command: h (prev) | j (pause) | k (play) | l (next)"
+  outputStr "Enter command:"
   maybeChar <- getInputChar "> "
   case maybeChar of
     Nothing -> return ()
-    Just char -> liftIO $ case char of
-      'h' -> withMPD previous >> return ()
-      'j' -> withMPD (pause True) >> return ()
-      'k' -> withMPD (play Nothing) >> return ()
-      'l' -> withMPD next >> return ()
+    Just char -> case char of
+      'h' -> liftIO (withMPD previous) >> return ()
+      'j' -> liftIO (withMPD (pause True)) >> return ()
+      'k' -> liftIO (withMPD (play Nothing)) >> return ()
+      'l' -> liftIO (withMPD next) >> return ()
+      'r' -> liftIO (withMPD (pause True)) >> renderUI Stopped
       _ -> return ()
 
   eitherStatus <- liftIO $ withMPD status
@@ -126,11 +127,13 @@ main = runInputT defaultSettings $ do
   outputStrLn "tt    oo  oo oo  oo nn   nn "
   outputStrLn " tttt  oooo   oooo  nn   nn\n"
   outputStrLn "The SoundCloud based interactive radio station\n"
-  outputStrLn "Commands (vim style):\n"
+  outputStrLn "Playback commands (vim style):\n"
   outputStrLn "h - previous"
   outputStrLn "j - pause"
   outputStrLn "k - play"
   outputStrLn "l - next\n"
+  outputStrLn "Tooning:"
+  outputStrLn "r - search"
 
   renderUI Stopped
 
