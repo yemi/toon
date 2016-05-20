@@ -1,6 +1,6 @@
 # Toon
 
-The SoundCloud based interactive radio station
+Interactive radio station based on SoundCloud
 
 ## Installation
 
