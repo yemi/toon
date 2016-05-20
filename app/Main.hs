@@ -104,7 +104,6 @@ renderUI Stopped = do
   playerState' <- liftIO $ handleResources maybeResources
   renderUI playerState'
 renderUI _ = do
-  outputStr "Enter command:"
   maybeChar <- getInputChar "> "
   case maybeChar of
     Nothing -> return ()
@@ -132,8 +131,8 @@ main = runInputT defaultSettings $ do
   outputStrLn "j - pause"
   outputStrLn "k - play"
   outputStrLn "l - next\n"
-  outputStrLn "Tooning:"
-  outputStrLn "r - search"
+  outputStrLn "Tooning:\n"
+  outputStrLn "r - enter URL to track\n"
 
   renderUI Stopped
 
