@@ -4,19 +4,26 @@
 module Main where
 
 import           Control.Lens             ((&), (.~), (^?))
-import           Control.Monad            (forM_)
+import           Control.Monad            (forM_, forever)
+import           Control.Monad.Free       (Free, foldFree)
+import           Control.Monad.Free.Class (liftF)
 import           Control.Monad.Trans      (liftIO)
 import           Data.Aeson               (FromJSON, parseJSON, withObject,
                                            (.:))
 import           Data.Monoid              ((<>))
 import           Data.String              (fromString)
 import           Data.Text                (Text, pack, unpack)
-import           Network.MPD              hiding (Track)
-import           Network.Wreq
+import           Network.MPD              (Response, Song, State (..), add,
+                                           clear, next, pause, play, playlistId,
+                                           previous, stState, status, withMPD)
+import           Network.Wreq             (asJSON, defaults, getWith, header,
+                                           param, responseBody)
 import           System.Console.Haskeline (InputT (), defaultSettings,
                                            getInputChar,
                                            getInputLineWithInitial, outputStrLn,
                                            runInputT)
+
+type UI a = InputT IO a
 
 data Resource
   = Track { t_id :: Int, t_title :: Text, t_streamURL :: Text }
@@ -50,9 +57,12 @@ fetchRelatedTracks Track { t_id } = do
   res <- asJSON =<< getWith opts ("http://api.soundcloud.com/tracks/" <> show t_id <> "/related")
   return $ res ^? responseBody
 
+addTrackToPlaylist :: Resource -> IO (Response ())
+addTrackToPlaylist Track { t_streamURL } =
+  withMPD . add . fromString . unpack $ t_streamURL <> "?client_id=" <> clientID
+
 addTracksToPlaylist :: [Resource] -> IO ()
-addTracksToPlaylist tracks = forM_ tracks $ \Track { t_streamURL } ->
-  withMPD $ add . fromString . unpack $ t_streamURL <> "?client_id=" <> clientID
+addTracksToPlaylist tracks = forM_ tracks addTrackToPlaylist
 
 getSongsInPlaylist :: IO [Song]
 getSongsInPlaylist = do
@@ -68,7 +78,10 @@ handleResource :: Maybe Resource -> IO (Maybe [Resource])
 handleResource maybeResource = case maybeResource of
   Nothing -> return Nothing
   Just resource -> case resource of
-    track@Track {} -> fetchRelatedTracks track
+    track@Track {} -> do
+      withMPD clear
+      addTrackToPlaylist track
+      fetchRelatedTracks track
     _ -> return Nothing
 
 handleResources :: Maybe [Resource] -> IO PlayerState
@@ -77,15 +90,14 @@ handleResources maybeResources = case maybeResources of
   Just resources -> case resources of
     Track {}:_ -> do
       putStrLn "Found tracks!"
-      withMPD clear
       addTracksToPlaylist resources
       putStrLn "Starting playlist :)"
       withMPD $ play Nothing
       return Playing
 
-renderUI :: PlayerState -> InputT IO ()
+renderUI :: PlayerState -> UI ()
 renderUI Stopped = do
-  outputStrLn "URL to track, user or playlist:"
+  outputStrLn "URL to track:"
   maybeURL <- getInputLineWithInitial "> " ("https://soundcloud.com/", "")
   maybeResource <- liftIO . searchResource $ pack <$> maybeURL
   maybeResources <- liftIO $ handleResource maybeResource
@@ -120,6 +132,5 @@ main = runInputT defaultSettings $ do
   outputStrLn "k - play"
   outputStrLn "l - next\n"
 
-  eitherStatus <- liftIO $ withMPD status
-  renderUI $ either (const Stopped) stState eitherStatus
+  renderUI Stopped
 
