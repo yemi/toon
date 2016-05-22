@@ -20,8 +20,11 @@ import           Network.Wreq             (asJSON, defaults, getWith, header,
                                            param, responseBody)
 import           System.Console.Haskeline (InputT (), defaultSettings,
                                            getInputChar,
-                                           getInputLineWithInitial, outputStrLn,
-                                           outputStr, runInputT)
+                                           getInputLineWithInitial, outputStr,
+                                           outputStrLn, runInputT)
+import           System.Process           (createProcess, proc)
+
+import           Toon
 
 type UI a = InputT IO a
 
@@ -120,6 +123,12 @@ renderUI _ = do
 
 main :: IO ()
 main = runInputT defaultSettings $ do
+
+  -- Start `mpd` server
+  _ <- liftIO . createProcess $ proc "mpd" ["--no-config"]
+
+
+  -- Usage info
   outputStrLn "\ntt                          "
   outputStrLn "tt     oooo   oooo  nn nnn  "
   outputStrLn "tttt  oo  oo oo  oo nnn  nn "
@@ -134,5 +143,6 @@ main = runInputT defaultSettings $ do
   outputStrLn "Tooning:\n"
   outputStrLn "r - enter URL to track\n"
 
+  -- Render UI
   renderUI Stopped
 
