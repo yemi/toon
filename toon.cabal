@@ -38,6 +38,9 @@ executable toon
                      , text
                      , libmpd
                      , process
+                     , vty
+                     , brick
+                     , vector
   default-language:    Haskell2010
 
 test-suite toon-test
